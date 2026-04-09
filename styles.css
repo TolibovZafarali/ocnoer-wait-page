@@ -1,0 +1,147 @@
+:root {
+  --bg: #050505;
+  --bg-deep: #090807;
+  --text: #f3ede4;
+  --text-strong: #fff8ee;
+  --glow: rgba(255, 236, 204, 0.12);
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: clamp(1.5rem, 4vw, 3rem);
+  background:
+    radial-gradient(circle at top, rgba(255, 242, 220, 0.035), transparent 34%),
+    linear-gradient(145deg, #030303 0%, var(--bg-deep) 42%, #020202 100%);
+  color: var(--text);
+  font-family: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype",
+    "Book Antiqua", Palatino, Georgia, serif;
+  isolation: isolate;
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: -18vmax;
+  pointer-events: none;
+  z-index: -2;
+}
+
+body::before {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(220, 183, 116, 0.16), transparent 28%),
+    radial-gradient(circle at 82% 28%, rgba(105, 84, 46, 0.18), transparent 24%),
+    radial-gradient(circle at 50% 82%, rgba(245, 228, 200, 0.08), transparent 22%);
+  filter: blur(38px);
+  opacity: 0.9;
+  animation: drift 22s ease-in-out infinite alternate;
+}
+
+body::after {
+  z-index: -1;
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, 0.02), transparent 28%),
+    radial-gradient(circle at 50% 50%, rgba(255, 235, 204, 0.03), transparent 45%),
+    linear-gradient(310deg, rgba(191, 153, 94, 0.08), transparent 34%);
+  filter: blur(54px);
+  animation: drift-reverse 28s ease-in-out infinite alternate;
+}
+
+.stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+}
+
+.line {
+  margin: 0;
+  text-align: center;
+  white-space: nowrap;
+  font-size: clamp(1rem, 2.85vw, 4.8rem);
+  line-height: 1;
+  letter-spacing: 0.018em;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text);
+  text-shadow:
+    0 0 1px rgba(255, 245, 230, 0.45),
+    0 0 18px rgba(255, 236, 204, 0.08);
+  animation: breathe 9s ease-in-out infinite;
+  transform-origin: center;
+  text-transform: lowercase;
+}
+
+.line__text {
+  color: rgba(243, 237, 228, 0.92);
+}
+
+.line__number {
+  color: var(--text-strong);
+  font-weight: 600;
+  font-variant-numeric: lining-nums tabular-nums;
+  text-shadow:
+    0 0 0.5px rgba(255, 255, 255, 0.7),
+    0 0 14px var(--glow),
+    0 0 34px rgba(211, 179, 122, 0.1);
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(-2%, -1.5%, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(2.5%, 1.5%, 0) scale(1.06);
+  }
+}
+
+@keyframes drift-reverse {
+  from {
+    transform: translate3d(2%, -1%, 0) scale(1.02);
+  }
+
+  to {
+    transform: translate3d(-2.5%, 2%, 0) scale(1.08);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+    text-shadow:
+      0 0 1px rgba(255, 245, 230, 0.4),
+      0 0 14px rgba(255, 236, 204, 0.06);
+  }
+
+  50% {
+    transform: translateY(-1px);
+    text-shadow:
+      0 0 1px rgba(255, 245, 230, 0.5),
+      0 0 20px rgba(255, 236, 204, 0.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after,
+  .line {
+    animation: none;
+  }
+}
