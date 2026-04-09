@@ -19,15 +19,36 @@
   </head>
   <body>
     <main class="stage">
-      <p class="line">
-        <span class="line__copy is-visible" data-copy aria-hidden="false">
-          <span class="line__text">you're one in </span>
-          <span class="line__number" data-population>8,250,000,000</span>
-        </span>
-        <span class="line__copy" data-copy aria-hidden="true">
-          <span class="line__message">wait for it, love</span>
-        </span>
-      </p>
+      <div class="orb" aria-hidden="true">
+        <svg class="orb__progress" viewBox="0 0 100 100" focusable="false">
+          <circle class="orb__track" cx="50" cy="50" r="46"></circle>
+          <circle
+            class="orb__meter"
+            cx="50"
+            cy="50"
+            r="46"
+            data-audio-progress
+          ></circle>
+        </svg>
+      </div>
+
+      <div class="content">
+        <p class="song-title">Любовь HD1080</p>
+        <p class="line">
+          <span class="line__copy is-visible" data-copy aria-hidden="false">
+            <span class="line__text">you're one in </span>
+            <span class="line__number" data-population>8,250,000,000</span>
+          </span>
+          <span class="line__copy" data-copy aria-hidden="true">
+            <span class="line__message">wait for it, love</span>
+          </span>
+        </p>
+        <button class="audio-prompt" type="button" data-audio-prompt hidden>
+          tap to hear
+        </button>
+      </div>
+
+      <audio data-audio preload="auto" playsinline src="./Любовь HD1080.mp3"></audio>
     </main>
     <script src="./main.js"></script>
   </body>
