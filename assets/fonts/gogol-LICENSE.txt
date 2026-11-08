@@ -1,4 +1,5 @@
-Copyright 2011 The Bad Script Project Authors (https://github.com/alexeiva/badscript)
+Copyright (c) Paratype, Inc., ParaType Ltd, 2009. All rights reserved.
+Copyright (c) 2018 Paratype Inc, ParaType Ltd, with Reserved Font Name "Gogol".
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

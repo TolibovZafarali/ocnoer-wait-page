@@ -1,6 +1,6 @@
 @font-face {
-  font-family: "Bad Script";
-  src: url("./assets/fonts/bad-script.woff2") format("woff2");
+  font-family: "Gogol";
+  src: url("./assets/fonts/gogol-regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -35,7 +35,7 @@ h1 {
   position: relative;
   margin: 0;
   max-width: 92vw;
-  font: 400 clamp(1.25rem, 2.25vw, 2rem)/1.5 "Bad Script", cursive;
+  font: 400 clamp(1.375rem, 2.5vw, 2.125rem)/1.35 "Gogol", cursive;
   text-align: center;
   text-wrap: balance;
   color: #fcf6ed;
