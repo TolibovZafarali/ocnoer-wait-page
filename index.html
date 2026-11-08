@@ -1,34 +1,20 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ru">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>you're one in</title>
-    <meta
-      name="description"
-      content="minimal one-line luxury screen with a softly changing random number."
-    />
-    <link rel="icon" href="data:," />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,500;1,600;1,700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="./styles.css" />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#03040a">
+    <title>мы встретимся в солнечном луче.</title>
+    <link rel="icon" href="data:,">
+    <link rel="preload" href="./assets/fonts/bad-script.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="./styles.css">
+    <script defer src="./star-wake.js"></script>
+    <script defer src="./main.js"></script>
   </head>
   <body>
-    <main class="stage">
-      <p class="line">
-        <span class="line__copy is-visible" data-copy aria-hidden="false">
-          <span class="line__text">you're one in </span>
-          <span class="line__number" data-population>8,250,000,000</span>
-        </span>
-        <span class="line__copy" data-copy aria-hidden="true">
-          <span class="line__message">wait for it, love</span>
-        </span>
-      </p>
+    <main>
+      <canvas id="sky" aria-hidden="true"></canvas>
+      <h1>мы встретимся в солнечном луче.</h1>
     </main>
-    <script src="./main.js"></script>
   </body>
 </html>
