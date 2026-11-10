@@ -73,20 +73,35 @@ window.drawStarFallback = function drawStarFallback(canvas) {
   let width, height, stars;
   let previous = 0, frame = 0, elapsed = 0;
 
-  const view = { matrix: new Float32Array(9) };
   function makeStars(count) {
-    const data = window.StarField.create(count);
     seed = 16053;
-    return Array.from({ length: count }, (_, i) => {
-      const offset = i * 8, kind = data[offset + 3];
-      const cluster = kind === 2 || ((kind === 0 || kind === 4) && random() < 0.45);
-      const hue = data[offset + 6];
+    const knots = Array.from({ length: 90 }, (_, i) => ({
+      arm: i % 2, radius: 0.23 + random() ** 0.84 * 1.18,
+      width: 0.015 + random() * 0.065, angle: normal() * 0.12
+    }));
+    return Array.from({ length: count }, () => {
+      const field = random() < 0.14;
+      const knot = random() < 0.36 ? knots[Math.floor(random() * knots.length)] : null;
+      const arm = knot ? knot.arm : Math.floor(random() * 2);
+      const radius = knot ? knot.radius + normal() * knot.width : 0.14 + random() ** 0.77 * 1.43;
+      const lane = Math.floor(random() * 4);
+      const scatter = random() < 0.19 ? 0.52 : knot ? 0.072 : 0.14;
+      const bend = 0.059 * Math.sin(radius * (6.4 + lane * 1.3) + 0.9 * lane + arm);
+      const angle = arm * Math.PI + 0.28 + 2.57 * Math.log(radius + 0.08)
+        + (lane - 1.5) * 0.135 + bend + (knot ? knot.angle : 0) + normal() * scatter;
+      const color = random();
+      const tint = (arm ? 3 : 0) + (color < 0.49 ? 0 : color < 0.79 ? 1 : 2);
+      const cluster = !field && random() < 0.61;
+      const flare = !cluster && random() < (field ? 0.013 : 0.015);
+      const size = cluster ? 19 + random() ** 1.6 * 25 : flare ? 9 + random() * 6 : 2.0 + random() ** 2.2 * 4.9;
       return {
-        radius: data[offset], angle: data[offset + 1], height: data[offset + 2], kind,
-        phase: data[offset + 7], size: cluster ? 14 + random() * 16 : data[offset + 4] * 1.15,
-        brightness: cluster ? 0.20 + data[offset + 5] * 0.28 : data[offset + 5],
-        tint: hue < 0.27 ? 0 : hue < 0.48 ? 1 : hue < 0.62 ? 2 : hue < 0.78 ? 3 : hue < 0.92 ? 4 : 5,
-        sprite: cluster ? 2 + Math.floor(random() * clusterVariants) : kind === 3 ? 1 : 0
+        radius, angle, height: normal() * (0.018 + radius * 0.035),
+        rate: 0.016 + 0.009 / (0.33 + radius), field,
+        x: random() * 1.08 - 0.04, y: random() * 1.08 - 0.04,
+        depth: random(), phase: random() * tau,
+        tint: field ? Math.floor(random() * palette.length) : tint,
+        sprite: cluster ? 2 + Math.floor(random() * clusterVariants) : flare ? 1 : 0,
+        size, brightness: cluster ? 0.26 + random() * 0.53 : 0.48 + random() * 0.50
       };
     });
   }
@@ -102,45 +117,68 @@ window.drawStarFallback = function drawStarFallback(canvas) {
       canvas.height = Math.max(1, Math.round(height * dpr));
       context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
       stars = makeStars(Math.min(8700, Math.round(2850 + width * height / 235)));
+      for (const star of stars) {
+        star.volumeDepth = window.StarField.depth(star.radius, star.angle, star.phase, star.field ? 1 : 0);
+      }
       wake.resize(width, height);
     }
     render();
   }
 
+  const lifted = [0, 0, 0, 1];
   function render() {
     if (!stars) return;
     context.globalAlpha = 1;
     context.globalCompositeOperation = 'source-over';
     context.fillStyle = '#03040a';
     context.fillRect(0, 0, width, height);
-    context.globalCompositeOperation = 'screen';
+    context.globalCompositeOperation = 'lighter';
     const cx = width / 2, cy = height / 2;
-    window.StarField.view(width, height, rotation.angles, view);
-    const m = view.matrix;
+    const landscape = smooth((width / height - 0.55) / 1.05);
+    const tilt = -0.88 + landscape * 0.56;
+    const cos = Math.cos(tilt), sin = Math.sin(tilt);
+    const span = Math.min(width * 0.61, height * 0.93);
+    const vertical = Math.max(1, (height / width) * 0.89);
+    const inclination = 0.56;
+    const yawC = Math.cos(rotation.angles[1]), yawS = Math.sin(rotation.angles[1]);
+    const pitchC = Math.cos(rotation.angles[0]), pitchS = Math.sin(rotation.angles[0]);
+    const rotated = Math.hypot(...rotation.angles) > 0.00001;
+    const sideView = window.StarField.sideAmount(rotation.angles[0], rotation.angles[1], tilt, inclination);
     const clusterScale = Math.max(0.55, Math.min(1.16, Math.sqrt(width * height) / 940));
     for (const star of stars) {
-      let x, y, perspective = 1;
-      if (star.kind === 1) {
-        x = cx + star.radius * width * 0.6 + Math.cos(elapsed * 0.045 + star.phase) * (4 + 8 * star.height);
-        y = cy + star.angle * height * 0.6 + Math.sin(elapsed * 0.037 + star.phase) * (4 + 8 * star.height);
+      let x, y, sizeScale = 1;
+      if (star.field) {
+        x = star.x * width + Math.sin(elapsed * 0.03 + star.phase) * 5;
+        y = star.y * height + Math.cos(elapsed * 0.04 + star.phase) * 5;
       } else {
-        const flow = Math.sin(star.phase * 0.27 + elapsed * 0.19 + star.radius * 3);
-        const radius = star.radius * (1 + 0.024 * flow);
-        const angle = star.angle + 0.045 * elapsed + 0.08 * flow
-          + (star.kind === 4 ? 0.015 : 0.043) * Math.sin(star.phase + elapsed * 0.32);
-        const px = radius * Math.cos(angle), py = radius * Math.sin(angle);
-        const pz = star.height + 0.008 * Math.sin(star.phase + elapsed * 0.24);
-        const depth = m[2] * px + m[5] * py + m[8] * pz;
-        perspective = view.camera / Math.max(1, view.camera - depth);
-        x = cx + (m[0] * px + m[3] * py + m[6] * pz) * view.scale * perspective;
-        y = cy + (m[1] * px + m[4] * py + m[7] * pz) * view.scale * perspective;
+        const angle = star.angle + elapsed * star.rate;
+        const u = star.radius * Math.cos(angle);
+        const v = star.radius * Math.sin(angle) * inclination + star.height;
+        const localX = span * (u * cos - v * sin);
+        const localY = span * vertical * (u * sin + v * cos);
+        const localZ = span * (star.radius * Math.sin(angle) * 0.49 + star.height);
+        if (rotated) {
+          // The old canvas view is orthographic. Put it on a camera plane,
+          // then lift along that plane's rays to retain its exact home image.
+          const z = localZ / span + star.volumeDepth;
+          window.StarField.lift(localX / span, localY / span, 0, z, 3.6, lifted);
+          const rotatedZ = -lifted[0] * yawS + lifted[2] * yawC;
+          const viewZ = lifted[1] * pitchS + rotatedZ * pitchC;
+          const perspective = 3.6 / Math.max(1, 3.6 - viewZ);
+          x = cx + (lifted[0] * yawC + lifted[2] * yawS) * span * perspective;
+          y = cy + (lifted[1] * pitchC - rotatedZ * pitchS) * span * perspective;
+          sizeScale = lifted[3] * perspective;
+        } else {
+          x = cx + localX;
+          y = cy + localY;
+        }
       }
-      if (x < -32 - wake.range / 0.65 || x > width + 32 + wake.range / 0.65 ||
-          y < -32 - wake.range / 0.65 || y > height + 32 + wake.range / 0.65) continue;
+      const margin = 32 * Math.max(1, sizeScale) + wake.range / 0.65;
+      if (x < -margin || x > width + margin || y < -margin || y > height + margin) continue;
 
-      const flicker = 0.93 + 0.07 * Math.sin(star.phase * 2 + elapsed * 0.9);
-      context.globalAlpha = Math.min(1, star.brightness * flicker * (0.8 + 0.2 * perspective));
-      const size = star.size * (star.sprite > 1 ? clusterScale : 1) * perspective;
+      const flicker = 0.92 + 0.08 * Math.sin(star.phase + elapsed * (0.43 + star.depth));
+      context.globalAlpha = star.brightness * flicker * (star.field ? 1 : 1 - sideView * (star.sprite > 1 ? 0.58 : 0.18));
+      const size = star.size * (star.sprite > 1 ? clusterScale : 1) * sizeScale;
 
       const drift = wake.sample(x, y);
       const response = 1 / (0.65 + 1.75 * smooth((star.size - 1) / 13));

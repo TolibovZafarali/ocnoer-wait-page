@@ -24,12 +24,12 @@
     precision highp float;
     attribute vec4 orbit;
     attribute vec4 light;
+    attribute float depthOffset;
     uniform float time;
     uniform float pixelRatio;
     uniform vec2 viewport;
-    uniform mat3 worldToView;
-    uniform float viewScale;
-    uniform float cameraDistance;
+    uniform vec2 rotation;
+    uniform float sideView;
     uniform highp sampler2D motionField;
     uniform vec2 fieldSize;
     uniform float fieldRange;
@@ -42,6 +42,7 @@
       float seed = light.w;
       vec2 position;
       float perspective = 1.0;
+      float sizeScale = 1.0;
       if (kind == 1.0) {
         vec2 drift = vec2(cos(time * 0.045 + seed), sin(time * 0.037 + seed));
         position = orbit.xy * viewport * 0.6 + drift * (4.0 + 8.0 * orbit.z);
@@ -50,11 +51,30 @@
         float radius = orbit.x * (1.0 + 0.024 * flow);
         float angle = orbit.y + 0.045 * time + 0.08 * flow
                     + (kind == 4.0 ? 0.015 : 0.043) * sin(seed + time * 0.32);
+        float nearSide = sin(angle) * radius;
         float height = orbit.z + 0.008 * sin(seed + time * 0.24);
-        vec3 world = vec3(cos(angle) * radius, sin(angle) * radius, height);
-        vec3 rotated = worldToView * world;
-        perspective = cameraDistance / max(1.0, cameraDistance - rotated.z);
-        position = rotated.xy * viewScale * perspective;
+        perspective = 3.6 / (3.6 - 0.49 * nearSide - height);
+        float portrait = 1.0 - smoothstep(0.65, 1.5, viewport.x / viewport.y);
+        float scale = min(max(viewport.x * 0.60, viewport.y * 0.53), viewport.y * 0.90);
+        float tilt = mix(-0.27, -1.02, portrait);
+        float inclination = mix(0.52, 0.57, portrait);
+        vec2 plane = vec2(cos(angle) * radius, nearSide * inclination + height);
+        float c = cos(tilt), s = sin(tilt);
+        vec3 rotated = vec3(c * plane.x - s * plane.y, s * plane.x + c * plane.y,
+                            0.49 * nearSide + height);
+        // Keep the original home projection bit-for-bit; the lift follows its
+        // camera rays and only becomes visible when the object is rotated.
+        if (dot(rotation, rotation) > 0.0000000001) {
+          sizeScale = (3.6 - rotated.z - depthOffset) / (3.6 - rotated.z);
+          rotated.xy *= sizeScale;
+          rotated.z += depthOffset;
+        }
+        float yawC = cos(rotation.y), yawS = sin(rotation.y);
+        rotated.xz = mat2(yawC, -yawS, yawS, yawC) * rotated.xz;
+        float pitchC = cos(rotation.x), pitchS = sin(rotation.x);
+        rotated.yz = mat2(pitchC, pitchS, -pitchS, pitchC) * rotated.yz;
+        perspective = 3.6 / max(1.0, 3.6 - rotated.z);
+        position = rotated.xy * scale * perspective;
       }
 
       vec2 uv = clamp(position / viewport + 0.5, 0.0, 1.0);
@@ -67,7 +87,7 @@
       float response = 1.0 / mass;
       position += drift * fieldRange * response;
       gl_Position = vec4(position / viewport * vec2(2.0, -2.0), 0.0, 1.0);
-      gl_PointSize = light.x * pixelRatio * perspective;
+      gl_PointSize = light.x * pixelRatio * perspective * sizeScale;
 
       vec3 sapphire = vec3(0.30, 0.47, 1.00);
       vec3 lilac = vec3(0.68, 0.62, 1.00);
@@ -77,7 +97,8 @@
       tint = mix(tint, rose, smoothstep(0.43, 0.72, light.z));
       tint = mix(tint, amber, smoothstep(0.70, 0.97, light.z));
       float shimmer = 0.93 + 0.07 * sin(seed * 2.0 + time * (0.7 + light.z));
-      brightness = light.y * shimmer * clamp(0.8 + 0.2 * perspective, 0.65, 1.15);
+      brightness = light.y * shimmer;
+      if (kind != 1.0) brightness *= mix(1.0, kind == 2.0 ? 0.42 : 0.82, sideView);
     }`;
 
   const fragmentSource = `
@@ -134,7 +155,7 @@
   gl.useProgram(program);
 
   const locations = {};
-  for (const name of ['time', 'pixelRatio', 'viewport', 'worldToView', 'viewScale', 'cameraDistance', 'fieldSize', 'fieldRange', 'motionField']) {
+  for (const name of ['time', 'pixelRatio', 'viewport', 'rotation', 'sideView', 'fieldSize', 'fieldRange', 'motionField']) {
     locations[name] = gl.getUniformLocation(program, name);
   }
   const wake = window.createStarWake(canvas);
@@ -157,13 +178,85 @@
     gl.vertexAttribPointer(location, 4, gl.FLOAT, false, 32, offset * 16);
   }
 
+  // Keep the same field when resizing or switching between still and moving views.
+  let sequence = 19383;
+  function random() {
+    sequence = (Math.imul(sequence, 1664525) + 1013904223) >>> 0;
+    return sequence / 4294967296;
+  }
+  function scatter() { return random() + random() + random() - 1.5; }
+
   const maxStars = 104000;
-  const stars = window.StarField.create(maxStars);
-  const view = { matrix: new Float32Array(9) };
+  const stars = new Float32Array(maxStars * 8);
+  const fullCircle = Math.PI * 2;
+  const clamp = value => Math.max(0, Math.min(1, value));
+  const knots = Array.from({ length: 88 }, (_, index) => ({
+    radius: 0.32 + random() * 1.15,
+    arm: index % 2,
+    width: 0.016 + random() * 0.052,
+    offset: scatter() * 0.116
+  }));
+  for (let i = 0; i < maxStars; i++) {
+    const population = random();
+    const field = population < 0.024;
+    const knot = random() < 0.47 ? knots[Math.floor(random() * knots.length)] : null;
+    const filament = !field && !knot && random() < 0.42;
+    const arm = knot ? knot.arm : Math.floor(random() * 2);
+    const r = knot ? knot.radius + scatter() * knot.width : 0.11 + 1.47 * Math.pow(random(), 0.68);
+    const phase = arm * Math.PI;
+    const strand = Math.floor(random() * 3) - 1;
+    const spine = phase + 0.55 + 3.18 * Math.log(r + 0.08) + 0.105 * Math.sin(r * 7.8 + phase);
+    const fork = strand * (0.13 + 0.12 * Math.sin(r * 5.7 + phase));
+    let angle = spine + fork + scatter() * (knot ? 0.11 : 0.32);
+    if (knot) angle += knot.offset;
+    if (filament) {
+      angle = spine + fork * 1.48 + 0.037 * Math.sin(13.0 * r + strand + phase) + scatter() * 0.048;
+    } else if (random() < 0.15) {
+      angle += scatter() * 1.36;
+    }
+
+    const thickness = knot ? 0.021 : 0.052;
+    const spread = filament ? 0.015 : thickness + r * 0.032;
+    const height = scatter() * spread + 0.021 * Math.sin(r * 9.0 + phase + strand);
+    let hue = (arm ? 0.78 : 0.18) + scatter() * 0.31 + (0.82 - r) * 0.24 + 0.10 * Math.sin(r * 6.0 + phase);
+    let kind = filament ? 4 : 0;
+    let diameter = 1.55 + Math.pow(random(), 3.4) * 4.1;
+    let flux = 0.20 + Math.pow(random(), 1.4) * 0.85;
+    if (filament) flux *= 0.55 + 0.96 * Math.sin(r * 8.0 + phase + strand) ** 2;
+    if (field) {
+      kind = 1;
+      hue = random();
+      diameter = 1.9 + Math.pow(random(), 4.0) * 7.6;
+      flux = 0.24 + random() * 0.72;
+      if (population > 0.012) flux *= 0.55;
+    } else if (population > 0.986) {
+      kind = 2;
+      diameter = 19 + random() * 44;
+      flux = knot || filament ? 0.05 + random() * 0.055 : 0.021;
+    } else if (population > 0.9838) {
+      kind = 3;
+      diameter = 10 + Math.pow(random(), 1.65) * 19;
+      flux = 0.68 + random() * 0.43;
+    }
+    stars.set([
+      field ? random() * 2 - 1 : r, field ? random() * 2 - 1 : angle,
+      field ? random() : height, kind, diameter, flux, clamp(hue), random() * fullCircle
+    ], i * 8);
+  }
   gl.bufferData(gl.ARRAY_BUFFER, stars, gl.STATIC_DRAW);
+  const depths = new Float32Array(maxStars);
+  for (let i = 0; i < maxStars; i++) {
+    const offset = i * 8;
+    depths[i] = window.StarField.depth(stars[offset], stars[offset + 1], stars[offset + 7], stars[offset + 3]);
+  }
+  const depthBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, depthBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, depths, gl.STATIC_DRAW);
+  const depthLocation = gl.getAttribLocation(program, 'depthOffset');
+  gl.enableVertexAttribArray(depthLocation);
+  gl.vertexAttribPointer(depthLocation, 1, gl.FLOAT, false, 0, 0);
   gl.enable(gl.BLEND);
-  // Screen blending preserves the glow without clipping dense side views to white.
-  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
+  gl.blendFunc(gl.ONE, gl.ONE);
   gl.clearColor(3 / 255, 4 / 255, 10 / 255, 1);
 
   let width = 0, height = 0, count = 0;
@@ -174,10 +267,11 @@
   function draw() {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.uniform1f(locations.time, elapsed);
-    window.StarField.view(width, height, rotation.angles, view);
-    gl.uniformMatrix3fv(locations.worldToView, false, view.matrix);
-    gl.uniform1f(locations.viewScale, view.scale);
-    gl.uniform1f(locations.cameraDistance, view.camera);
+    gl.uniform2fv(locations.rotation, rotation.angles);
+    const t = Math.max(0, Math.min(1, (width / height - 0.65) / 0.85));
+    const portrait = 1 - t * t * (3 - 2 * t);
+    gl.uniform1f(locations.sideView, window.StarField.sideAmount(rotation.angles[0], rotation.angles[1],
+      -0.27 - 0.75 * portrait, 0.52 + 0.05 * portrait));
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, wake.width, wake.height, gl.RGBA, gl.UNSIGNED_BYTE, wake.pixels);
     gl.drawArrays(gl.POINTS, 0, count);
   }

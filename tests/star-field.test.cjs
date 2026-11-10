@@ -6,86 +6,65 @@ const vm = require('node:vm');
 
 const window = {};
 vm.runInNewContext(readFileSync(join(__dirname, '..', 'star-field.js'), 'utf8'), { window });
-const { create, view } = window.StarField;
-const stars = create(18000);
-
-function transform(matrix, point) {
-  return [0, 1, 2].map(row => matrix[row] * point[0] + matrix[row + 3] * point[1] + matrix[row + 6] * point[2]);
-}
+const { depth, lift, sideAmount } = window.StarField;
 
 function standardDeviation(values) {
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   return Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length);
 }
 
-function projectedSpread(width, height, pitch, yaw) {
-  const camera = view(width, height, [pitch, yaw]);
-  let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-  for (let i = 0; i < stars.length; i += 8) {
-    if (stars[i + 3] === 1) continue; // Background must not hide a flattened galaxy.
-    const p = transform(camera.matrix, [stars[i] * Math.cos(stars[i + 1]), stars[i] * Math.sin(stars[i + 1]), stars[i + 2]]);
-    const perspective = camera.camera / (camera.camera - p[2]);
-    const x = p[0] * camera.scale * perspective, y = p[1] * camera.scale * perspective;
-    assert.ok(Number.isFinite(x) && Number.isFinite(y) && perspective > 0);
-    n++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
-  }
-  const xx = sxx / n - (sx / n) ** 2, yy = syy / n - (sy / n) ** 2;
-  const xy = sxy / n - sx * sy / (n * n);
-  const discriminant = Math.sqrt((xx - yy) ** 2 + 4 * xy * xy);
-  return { minor: Math.sqrt((xx + yy - discriminant) / 2), major: Math.sqrt((xx + yy + discriminant) / 2) };
-}
-
-test('star generation is deterministic, finite, and preserves the vertex layout', () => {
-  assert.equal(stars.length, 18000 * 8);
-  assert.deepEqual(stars, create(18000));
-  for (let i = 0; i < stars.length; i += 8) {
-    for (let channel = 0; channel < 8; channel++) assert.ok(Number.isFinite(stars[i + channel]));
-    assert.ok(stars[i + 4] > 0 && stars[i + 5] >= 0);
-    assert.ok(stars[i + 6] >= 0 && stars[i + 6] <= 1);
+test('depth is deterministic, bounded, and leaves background stars fixed', () => {
+  for (let i = 0; i < 1000; i++) {
+    const radius = 0.12 + (i % 137) / 100;
+    const angle = i * 0.417;
+    const seed = i * 0.173;
+    for (const kind of [0, 2, 3, 4]) {
+      const value = depth(radius, angle, seed, kind);
+      assert.equal(value, depth(radius, angle, seed, kind));
+      assert.ok(Number.isFinite(value) && Math.abs(value) <= 0.7);
+    }
+    assert.equal(depth(radius, angle, seed, 1), 0);
   }
 });
 
-test('arms, core, and halo have independent depth on both sides of the disk', () => {
-  const groups = { arms: [], core: [], halo: [] };
-  for (let i = 0; i < stars.length; i += 8) {
-    const kind = stars[i + 3];
-    if (kind === 1) continue;
-    groups[kind === 5 ? 'core' : kind === 6 ? 'halo' : 'arms'].push(stars[i + 2]);
-  }
-  for (const [name, heights] of Object.entries(groups)) {
-    assert.ok(heights.length > 500, `${name} population missing`);
-    assert.ok(standardDeviation(heights) > 0.06, `${name} must have substantial thickness`);
-    assert.ok(heights.some(h => h < -0.1) && heights.some(h => h > 0.1), `${name} must straddle the disk`);
+test('stars gain independent depth on both sides of the original field', () => {
+  for (const radius of [0.2, 0.6, 1.2, 1.5]) {
+    const samples = Array.from({ length: 1000 }, (_, i) => depth(radius, i * 0.417, i * 0.173, 0));
+    assert.ok(standardDeviation(samples) > 0.04, `radius ${radius} remains too flat`);
+    assert.ok(samples.some(value => value < -0.05) && samples.some(value => value > 0.05));
   }
 });
 
-test('view rotation preserves orthogonal axes and lengths on desktop and mobile', () => {
+test('ray lifting preserves the home-view star positions and sprite sizes', () => {
+  const camera = 3.6;
   for (const [width, height] of [[1280, 800], [390, 844]]) {
-    for (let pitch = 0; pitch <= Math.PI; pitch += Math.PI / 12) {
-      for (const yaw of [0, Math.PI / 4, Math.PI / 2]) {
-        const { matrix } = view(width, height, [pitch, yaw]);
-        for (let a = 0; a < 3; a++) {
-          for (let b = 0; b < 3; b++) {
-            let dot = 0;
-            for (let row = 0; row < 3; row++) dot += matrix[a * 3 + row] * matrix[b * 3 + row];
-            assert.ok(Math.abs(dot - Number(a === b)) < 1e-6, 'camera axes must remain orthonormal');
-          }
-        }
-        const point = [0.7, -0.4, 0.3];
-        assert.ok(Math.abs(Math.hypot(...transform(matrix, point)) - Math.hypot(...point)) < 1e-6);
+    const scale = Math.min(Math.max(width * 0.6, height * 0.53), height * 0.9);
+    for (let i = 0; i < 200; i++) {
+      const x = Math.sin(i * 0.7) * 1.4, y = Math.cos(i * 0.31) * 0.8;
+      const z = Math.sin(i * 0.41) * 0.9;
+      const displacement = depth(Math.hypot(x, y), i * 0.417, i * 0.173, 0);
+      const out = [0, 0, 0, 1];
+      assert.equal(lift(x, y, z, displacement, camera, out), out);
+      const before = camera / (camera - z), after = camera / (camera - out[2]);
+      assert.ok(out.every(Number.isFinite) && out[3] > 0);
+      assert.ok(Math.abs(x * scale * before - out[0] * scale * after) < 1e-6);
+      assert.ok(Math.abs(y * scale * before - out[1] * scale * after) < 1e-6);
+      for (const diameter of [1.5, 5, 24, 60]) {
+        assert.ok(Math.abs(diameter * before - diameter * out[3] * after) < 1e-6);
       }
     }
   }
 });
 
-test('the galaxy retains visible projected thickness through side and reverse views', () => {
-  for (const [width, height] of [[1280, 800], [390, 844]]) {
-    for (let degrees = 0; degrees <= 180; degrees += 15) {
-      for (const yaw of [0, Math.PI / 4, Math.PI / 2]) {
-        const { minor, major } = projectedSpread(width, height, degrees * Math.PI / 180, yaw);
-        const label = `${width}x${height}, pitch ${degrees}, yaw ${yaw}`;
-        assert.ok(minor > Math.min(width, height) * 0.025, `${label}: minor-axis spread ${minor}px is too thin`);
-        assert.ok(minor / major > 0.08, `${label}: projected aspect ratio ${minor / major} collapses into a line`);
+test('edge treatment is absent at home and strongest at true side views', () => {
+  for (const [tilt, inclination] of [[-0.27, 0.52], [-1.02, 0.57]]) {
+    assert.equal(sideAmount(0, 0, tilt, inclination), 0);
+    const edgePitch = Math.atan(inclination / (0.49 * Math.cos(tilt)));
+    assert.ok(sideAmount(edgePitch, 0, tilt, inclination) > 0.8);
+    for (let pitch = -Math.PI; pitch <= Math.PI; pitch += Math.PI / 12) {
+      for (const yaw of [-Math.PI / 2, 0, Math.PI / 2, Math.PI]) {
+        const value = sideAmount(pitch, yaw, tilt, inclination);
+        assert.ok(Number.isFinite(value) && value >= 0 && value <= 1);
       }
     }
   }
