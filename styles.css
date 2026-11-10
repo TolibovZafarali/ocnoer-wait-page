@@ -31,6 +31,25 @@ canvas {
   pointer-events: none;
 }
 
+.sky-control {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: pinch-zoom;
+}
+
+.sky-control[data-dragging="true"] { cursor: grabbing; }
+.sky-control:focus-visible { outline: 1px solid #858bad; outline-offset: -8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-control { cursor: default; }
+}
+
 h1 {
   position: relative;
   margin: 0;

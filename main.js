@@ -15,7 +15,7 @@
     alpha: false, antialias: false, depth: false, stencil: false,
     powerPreference: 'low-power'
   });
-  if (!gl) {
+  if (!gl || gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) === 0) {
     useCanvasFallback();
     return;
   }
@@ -27,8 +27,10 @@
     uniform float time;
     uniform float pixelRatio;
     uniform vec2 viewport;
-    uniform vec3 pointer;
-    uniform vec4 wake[4];
+    uniform vec2 rotation;
+    uniform highp sampler2D motionField;
+    uniform vec2 fieldSize;
+    uniform float fieldRange;
     varying vec3 tint;
     varying float brightness;
     varying float kind;
@@ -55,20 +57,25 @@
         float inclination = mix(0.52, 0.57, portrait);
         vec2 plane = vec2(cos(angle) * radius, nearSide * inclination + height);
         float c = cos(tilt), s = sin(tilt);
-        position = vec2(c * plane.x - s * plane.y, s * plane.x + c * plane.y) * scale * perspective;
+        vec3 rotated = vec3(c * plane.x - s * plane.y, s * plane.x + c * plane.y,
+                            0.49 * nearSide + height);
+        float yawC = cos(rotation.y), yawS = sin(rotation.y);
+        rotated.xz = mat2(yawC, -yawS, yawS, yawC) * rotated.xz;
+        float pitchC = cos(rotation.x), pitchS = sin(rotation.x);
+        rotated.yz = mat2(pitchC, pitchS, -pitchS, pitchC) * rotated.yz;
+        perspective = 3.6 / max(1.0, 3.6 - rotated.z);
+        position = rotated.xy * scale * perspective;
       }
 
-      float reach = clamp(min(viewport.x, viewport.y) * 0.14, 64.0, 108.0);
-      vec2 offset = position - pointer.xy * viewport * 0.5;
-      float hover = pointer.z * exp(-dot(offset, offset) / (reach * reach));
-      vec2 drift = vec2(-offset.y, offset.x) * (0.06 * hover);
-      for (int i = 0; i < 4; i++) {
-        vec2 fromWake = position - wake[i].xy * viewport * 0.5;
-        float distanceSquared = dot(fromWake, fromWake) / (reach * reach);
-        drift += wake[i].zw * exp(-distanceSquared);
-      }
-      // Limit even the fastest sweep to ten CSS pixels of local displacement.
-      position += drift / max(1.0, length(drift) / 10.0);
+      vec2 uv = clamp(position / viewport + 0.5, 0.0, 1.0);
+      // Sample texel centers so the GPU and canvas use the same interpolation.
+      uv = (uv * (fieldSize - 1.0) + 0.5) / fieldSize;
+      vec4 motion = texture2D(motionField, uv);
+      vec2 drift = (vec2(dot(motion.rg, vec2(65280.0, 255.0)),
+                         dot(motion.ba, vec2(65280.0, 255.0))) - 32768.0) / 32767.0;
+      float mass = mix(0.65, 2.4, smoothstep(1.0, 14.0, light.x));
+      float response = 1.0 / mass;
+      position += drift * fieldRange * response;
       gl_Position = vec4(position / viewport * vec2(2.0, -2.0), 0.0, 1.0);
       gl_PointSize = light.x * pixelRatio * perspective;
 
@@ -137,11 +144,21 @@
   gl.useProgram(program);
 
   const locations = {};
-  for (const name of ['time', 'pixelRatio', 'viewport', 'pointer']) {
+  for (const name of ['time', 'pixelRatio', 'viewport', 'rotation', 'fieldSize', 'fieldRange', 'motionField']) {
     locations[name] = gl.getUniformLocation(program, name);
   }
-  locations.wake = gl.getUniformLocation(program, 'wake[0]');
   const wake = window.createStarWake(canvas);
+  const rotation = window.createStarRotation();
+  const control = document.querySelector('.sky-control');
+  const motionTexture = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, motionTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.uniform1i(locations.motionField, 0);
+  gl.uniform1f(locations.fieldRange, wake.range);
   const buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
   for (const [offset, name] of ['orbit', 'light'].entries()) {
@@ -221,8 +238,6 @@
   gl.clearColor(3 / 255, 4 / 255, 10 / 255, 1);
 
   let width = 0, height = 0, count = 0;
-  let x = 0, y = 0, strength = 0;
-  let targetX = 0, targetY = 0, targetStrength = 0;
   let frame = 0, previousTime = 0, elapsed = 0;
   const listeners = new AbortController();
   const options = { passive: true, signal: listeners.signal };
@@ -230,8 +245,8 @@
   function draw() {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.uniform1f(locations.time, elapsed);
-    gl.uniform3f(locations.pointer, x, y, strength);
-    gl.uniform4fv(locations.wake, wake.samples);
+    gl.uniform2fv(locations.rotation, rotation.angles);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, wake.width, wake.height, gl.RGBA, gl.UNSIGNED_BYTE, wake.pixels);
     gl.drawArrays(gl.POINTS, 0, count);
   }
 
@@ -245,6 +260,9 @@
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.uniform1f(locations.pixelRatio, ratio);
     gl.uniform2f(locations.viewport, width, height);
+    wake.resize(width, height);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, wake.width, wake.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, wake.pixels);
+    gl.uniform2f(locations.fieldSize, wake.width, wake.height);
     count = Math.min(maxStars, Math.round(25500 + width * height / 19));
     draw();
   }
@@ -254,10 +272,7 @@
     previousTime = now;
     elapsed += dt;
     wake.step(dt);
-    const ease = 1 - Math.exp(-dt * 8);
-    x += (targetX - x) * ease;
-    y += (targetY - y) * ease;
-    strength += (targetStrength - strength) * ease;
+    rotation.step(dt);
     draw();
     frame = requestAnimationFrame(animate);
   }
@@ -266,7 +281,8 @@
     cancelAnimationFrame(frame);
     previousTime = 0;
     wake.reset();
-    strength = targetStrength = 0;
+    rotation.reset();
+    control.dataset.dragging = 'false';
     if (document.hidden) return;
     if (motionPreference.matches) {
       draw();
@@ -277,23 +293,25 @@
 
   function follow(event) {
     if (motionPreference.matches || document.hidden) return;
-    const bounds = canvas.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return;
-    targetX = (event.clientX - bounds.left) / bounds.width * 2 - 1;
-    targetY = (event.clientY - bounds.top) / bounds.height * 2 - 1;
-    if (!targetStrength && strength < 0.02) {
-      x = targetX;
-      y = targetY;
-    }
-    targetStrength = 1;
-    wake.move(event);
+    rotation.move(event);
+    if (!rotation.dragging) wake.move(event);
+  }
+  function press(event) {
+    if (motionPreference.matches || document.hidden) return;
+    rotation.down(event);
+    wake.release();
+    control.dataset.dragging = 'true';
   }
   function leave() {
-    targetStrength = 0;
+    rotation.release();
     wake.release();
+    control.dataset.dragging = 'false';
   }
 
-  const unbind = window.bindSkyPointer({ move: follow, down: follow, leave });
+  const unbind = window.bindSkyPointer({ move: follow, down: press, up: leave, leave });
+  control.addEventListener('keydown', event => {
+    if (!motionPreference.matches && rotation.key(event)) event.preventDefault();
+  }, { signal: listeners.signal });
   motionPreference.addEventListener('change', updateMotion, options);
   document.addEventListener('visibilitychange', updateMotion, options);
   const observer = new ResizeObserver(resize);

@@ -6,6 +6,8 @@ window.drawStarFallback = function drawStarFallback(canvas) {
   const listeners = new AbortController();
   const options = { passive: true, signal: listeners.signal };
   const wake = window.createStarWake(canvas);
+  const rotation = window.createStarRotation();
+  const control = document.querySelector('.sky-control');
   const palette = ['119,137,255', '171,157,250', '202,222,255', '239,157,116', '255,205,169', '247,236,225'];
   const tau = Math.PI * 2;
   let seed = 0;
@@ -70,7 +72,6 @@ window.drawStarFallback = function drawStarFallback(canvas) {
 
   let width, height, stars;
   let previous = 0, frame = 0, elapsed = 0;
-  let pointerX = 0, pointerY = 0, curl = 0;
 
   function makeStars(count) {
     seed = 16053;
@@ -116,13 +117,11 @@ window.drawStarFallback = function drawStarFallback(canvas) {
       canvas.height = Math.max(1, Math.round(height * dpr));
       context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
       stars = makeStars(Math.min(8700, Math.round(2850 + width * height / 235)));
-      wake.reset();
-      curl = 0;
+      wake.resize(width, height);
     }
     render();
   }
 
-  const impulses = [];
   function render() {
     if (!stars) return;
     context.globalAlpha = 1;
@@ -137,14 +136,8 @@ window.drawStarFallback = function drawStarFallback(canvas) {
     const span = Math.min(width * 0.61, height * 0.93);
     const vertical = Math.max(1, (height / width) * 0.89);
     const inclination = 0.56;
-    const reach = Math.max(76, Math.min(150, Math.min(width, height) * 0.19));
-    const reachSquared = reach * reach;
-    impulses.length = 0;
-    const samples = wake.samples;
-    for (let i = 0; i < samples.length; i += 4) {
-      if (Math.abs(samples[i + 2]) + Math.abs(samples[i + 3]) < 0.05) continue;
-      impulses.push((samples[i] + 1) * cx, (samples[i + 1] + 1) * cy, samples[i + 2], samples[i + 3]);
-    }
+    const yawC = Math.cos(rotation.angles[1]), yawS = Math.sin(rotation.angles[1]);
+    const pitchC = Math.cos(rotation.angles[0]), pitchS = Math.sin(rotation.angles[0]);
     const clusterScale = Math.max(0.55, Math.min(1.16, Math.sqrt(width * height) / 940));
     for (const star of stars) {
       let x, y;
@@ -155,33 +148,24 @@ window.drawStarFallback = function drawStarFallback(canvas) {
         const angle = star.angle + elapsed * star.rate;
         const u = star.radius * Math.cos(angle);
         const v = star.radius * Math.sin(angle) * inclination + star.height;
-        x = cx + span * (u * cos - v * sin);
-        y = cy + span * vertical * (u * sin + v * cos);
+        const localX = span * (u * cos - v * sin);
+        const localY = span * vertical * (u * sin + v * cos);
+        const localZ = span * (star.radius * Math.sin(angle) * 0.49 + star.height);
+        const rotatedZ = -localX * yawS + localZ * yawC;
+        x = cx + localX * yawC + localZ * yawS;
+        y = cy + localY * pitchC - rotatedZ * pitchS;
       }
-      if (x < -32 || x > width + 32 || y < -32 || y > height + 32) continue;
+      if (x < -32 - wake.range / 0.65 || x > width + 32 + wake.range / 0.65 ||
+          y < -32 - wake.range / 0.65 || y > height + 32 + wake.range / 0.65) continue;
 
       const flicker = 0.92 + 0.08 * Math.sin(star.phase + elapsed * (0.43 + star.depth));
       context.globalAlpha = star.brightness * flicker;
       const size = star.size * (star.sprite > 1 ? clusterScale : 1);
 
-      let driftX = 0, driftY = 0;
-      const depth = 0.30 + star.depth * 0.40;
-      for (let i = 0; i < impulses.length; i += 4) {
-        const localX = x - impulses[i], localY = y - impulses[i + 1];
-        const falloff = Math.max(0, 1 - (localX * localX + localY * localY) / reachSquared);
-        const weight = falloff * falloff * depth;
-        driftX += impulses[i + 2] * weight;
-        driftY += impulses[i + 3] * weight;
-      }
-      if (curl > 0.002) {
-        const localX = x - pointerX, localY = y - pointerY;
-        const falloff = Math.max(0, 1 - (localX * localX + localY * localY) / reachSquared);
-        const turn = curl * falloff * falloff * 0.042;
-        driftX -= localY * turn;
-        driftY += localX * turn;
-      }
-      x += driftX;
-      y += driftY;
+      const drift = wake.sample(x, y);
+      const response = 1 / (0.65 + 1.75 * smooth((star.size - 1) / 13));
+      x += drift[0] * response;
+      y += drift[1] * response;
       context.drawImage(atlas, star.tint * tile, star.sprite * tile, tile, tile,
         x - size / 2, y - size / 2, size, size);
     }
@@ -194,35 +178,45 @@ window.drawStarFallback = function drawStarFallback(canvas) {
       return;
     }
     frame = requestAnimationFrame(tick);
-    if (previous && now - previous < 1000 / 36) return;
     const dt = previous ? Math.min(0.08, (now - previous) / 1000) : 0;
     previous = now;
     elapsed += dt;
-    curl *= Math.exp(-dt * 3.4);
     wake.step(dt);
+    rotation.step(dt);
     render();
   }
 
   function follow(event) {
     if (reduced.matches || document.hidden) return;
-    const bounds = canvas.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return;
-    pointerX = (event.clientX - bounds.left) * width / bounds.width;
-    pointerY = (event.clientY - bounds.top) * height / bounds.height;
-    curl = 1;
-    wake.move(event);
+    rotation.move(event);
+    if (!rotation.dragging) wake.move(event);
+  }
+  function press(event) {
+    if (reduced.matches || document.hidden) return;
+    rotation.down(event);
+    wake.release();
+    control.dataset.dragging = 'true';
+  }
+  function leave() {
+    rotation.release();
+    wake.release();
+    control.dataset.dragging = 'false';
   }
 
   function syncPlayback() {
     cancelAnimationFrame(frame);
     frame = previous = 0;
-    curl = 0;
     wake.reset();
+    rotation.reset();
+    control.dataset.dragging = 'false';
     if (document.hidden) return;
     if (reduced.matches) render();
     else frame = requestAnimationFrame(tick);
   }
-  const unbindPointer = window.bindSkyPointer({ move: follow, leave: wake.release });
+  const unbindPointer = window.bindSkyPointer({ move: follow, down: press, up: leave, leave });
+  control.addEventListener('keydown', event => {
+    if (!reduced.matches && rotation.key(event)) event.preventDefault();
+  }, { signal: listeners.signal });
   reduced.addEventListener('change', syncPlayback, options);
   document.addEventListener('visibilitychange', syncPlayback, options);
   const observer = new ResizeObserver(resize);

@@ -1,92 +1,144 @@
 window.createStarWake = function createStarWake(canvas) {
-  const samples = new Float32Array(16);
-  // Sample recent positions in time so a faster sweep naturally has a longer tail.
-  const delays = [0, 70, 165, 285];
-  const weights = [0.65, 0.39, 0.24, 0.14];
-  const history = [];
+  // A small screen-space motion field retains momentum along the mouse path.
+  // Both renderers sample this field, in CSS pixels, independent of pixel ratio.
+  const range = 96;
+  let width = 2, height = 2, viewWidth = 1, viewHeight = 1;
+  let displacementX, displacementY, velocityX, velocityY, pixels;
   let previous = null;
   let idle = Infinity;
-  let velocityX = 0, velocityY = 0;
+  const result = [0, 0];
+
+  function encode() {
+    for (let i = 0; i < displacementX.length; i++) {
+      const x = Math.round(32768 + displacementX[i] / range * 32767);
+      const y = Math.round(32768 + displacementY[i] / range * 32767);
+      pixels[i * 4] = x >> 8;
+      pixels[i * 4 + 1] = x & 255;
+      pixels[i * 4 + 2] = y >> 8;
+      pixels[i * 4 + 3] = y & 255;
+    }
+  }
+
+  function reset() {
+    previous = null;
+    idle = Infinity;
+    displacementX.fill(0);
+    displacementY.fill(0);
+    velocityX.fill(0);
+    velocityY.fill(0);
+    encode();
+  }
+
+  function resize(w, h) {
+    if (!(w > 0 && h > 0)) return;
+    if (w === viewWidth && h === viewHeight && pixels) return;
+    viewWidth = w;
+    viewHeight = h;
+    width = Math.max(2, Math.min(128, Math.ceil(w / 20) + 1));
+    height = Math.max(2, Math.min(128, Math.ceil(h / 20) + 1));
+    displacementX = new Float32Array(width * height);
+    displacementY = new Float32Array(width * height);
+    velocityX = new Float32Array(width * height);
+    velocityY = new Float32Array(width * height);
+    pixels = new Uint8Array(width * height * 4);
+    reset();
+  }
+
+  function stir(x, y, dx, dy, radius) {
+    const cellX = viewWidth / (width - 1), cellY = viewHeight / (height - 1);
+    const left = Math.max(0, Math.floor((x - radius) / cellX));
+    const right = Math.min(width - 1, Math.ceil((x + radius) / cellX));
+    const top = Math.max(0, Math.floor((y - radius) / cellY));
+    const bottom = Math.min(height - 1, Math.ceil((y + radius) / cellY));
+    for (let row = top; row <= bottom; row++) {
+      for (let col = left; col <= right; col++) {
+        const nx = (col * cellX - x) / radius;
+        const ny = (row * cellY - y) / radius;
+        const distance = Math.min(1, Math.hypot(nx, ny));
+        const falloff = (1 - distance * distance * (3 - 2 * distance)) ** 2;
+        const index = row * width + col;
+        velocityX[index] += dx * falloff * 5.4;
+        velocityY[index] += dy * falloff * 5.4;
+        const speed = Math.hypot(velocityX[index], velocityY[index]);
+        const limit = viewHeight * 0.25;
+        if (speed > limit) {
+          velocityX[index] *= limit / speed;
+          velocityY[index] *= limit / speed;
+        }
+      }
+    }
+  }
 
   function move(event) {
     if (event.isPrimary === false) return;
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
+    const x = (event.clientX - rect.left) * viewWidth / rect.width;
+    const y = (event.clientY - rect.top) * viewHeight / rect.height;
     const time = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
-    const x = Math.max(-1, Math.min(1, (event.clientX - rect.left) * 2 / rect.width - 1));
-    const y = Math.max(-1, Math.min(1, (event.clientY - rect.top) * 2 / rect.height - 1));
-    const point = { time, x, y, dx: 0, dy: 0 };
+    const point = { x, y, time };
     if (!previous || time < previous.time || time - previous.time > 240) {
-      history.length = 0;
-      history.push(point);
-      velocityX = velocityY = 0;
       previous = point;
       return;
     }
-
-    const deltaX = (x - previous.x) * rect.width * 0.5;
-    const deltaY = (y - previous.y) * rect.height * 0.5;
-    if (deltaX === 0 && deltaY === 0) return;
-    const dt = Math.max(1, time - previous.time);
-    const blend = 1 - Math.exp(-dt / 32);
-    velocityX += (deltaX * 1000 / dt - velocityX) * blend;
-    velocityY += (deltaY * 1000 / dt - velocityY) * blend;
-    const speed = Math.hypot(velocityX, velocityY);
-    const sensitivity = event.pointerType === 'touch' ? 345 : 430;
-    const magnitude = 7 * (1 - Math.exp(-speed / sensitivity));
-    if (speed > 0) {
-      point.dx = velocityX / speed * magnitude;
-      point.dy = velocityY / speed * magnitude;
+    const dx = x - previous.x, dy = y - previous.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 0.01) return;
+    const radius = Math.min(88, viewWidth * 0.23);
+    // Fill between events, including a quick sweep on a low-rate input device.
+    const steps = Math.min(128, Math.max(1, Math.ceil(distance / 12)));
+    const sensitivity = event.pointerType === 'touch' ? 0.8 : 1;
+    for (let i = 0; i < steps; i++) {
+      const t = (i + 0.5) / steps;
+      stir(previous.x + dx * t, previous.y + dy * t,
+        dx / steps * sensitivity, dy / steps * sensitivity, radius);
     }
-
-    // Keep a short path with enough temporal resolution for high-rate mice.
-    if (history.length > 1 && time - history[history.length - 2].time < 8) history.pop();
-    history.push(point);
-    while (history.length > 2 && time - history[1].time > 350) history.shift();
     previous = point;
     idle = 0;
   }
 
   function step(seconds) {
-    if (!history.length) return samples;
-    const dt = Math.max(0, seconds);
+    const dt = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+    if (idle === Infinity) return;
     idle += dt;
-    if (idle >= 1.2) {
-      samples.fill(0);
-      return samples;
+    if (idle >= 6) { reset(); return; }
+    // Integrate coasting velocity and orbit relaxation separately. This gives
+    // the long, soft return of the reference without a bouncing spring.
+    const drag = 2.3;
+    const velocityDecay = Math.exp(-drag * dt), returnDecay = Math.exp(-dt);
+    const travel = (returnDecay - velocityDecay) / (drag - 1);
+    for (let i = 0; i < displacementX.length; i++) {
+      displacementX[i] = displacementX[i] * returnDecay + velocityX[i] * travel;
+      displacementY[i] = displacementY[i] * returnDecay + velocityY[i] * travel;
+      velocityX[i] *= velocityDecay;
+      velocityY[i] *= velocityDecay;
+      const length = Math.hypot(displacementX[i], displacementY[i]);
+      if (length > range) {
+        displacementX[i] *= range / length;
+        displacementY[i] *= range / length;
+      }
     }
-    const envelope = Math.exp(-4.7 * Math.max(0, idle - 0.035));
-    const blend = 1 - Math.exp(-dt / 0.033);
-    const latest = history[history.length - 1];
-    let index = history.length - 1;
-    for (let i = 0; i < delays.length; i++) {
-      const time = latest.time - delays[i];
-      while (index > 0 && history[index].time > time) index--;
-      const a = history[index];
-      const b = history[Math.min(index + 1, history.length - 1)];
-      const mix = b.time > a.time ? Math.max(0, Math.min(1, (time - a.time) / (b.time - a.time))) : 0;
-      const targetX = a.x + (b.x - a.x) * mix;
-      const targetY = a.y + (b.y - a.y) * mix;
-      const weight = weights[i] * envelope;
-      const base = i * 4;
-      const positionBlend = Math.abs(samples[base + 2]) + Math.abs(samples[base + 3]) < 0.1 ? 1 : blend;
-      samples[base] += (targetX - samples[base]) * positionBlend;
-      samples[base + 1] += (targetY - samples[base + 1]) * positionBlend;
-      samples[base + 2] += ((a.dx + (b.dx - a.dx) * mix) * weight - samples[base + 2]) * blend;
-      samples[base + 3] += ((a.dy + (b.dy - a.dy) * mix) * weight - samples[base + 3]) * blend;
-    }
-    return samples;
+    encode();
   }
 
-  function release() { previous = null; }
-  function reset() {
-    release();
-    history.length = 0;
-    idle = Infinity;
-    velocityX = velocityY = 0;
-    samples.fill(0);
+  function sample(x, y, out = result) {
+    const gx = Math.max(0, Math.min(width - 1, x / viewWidth * (width - 1)));
+    const gy = Math.max(0, Math.min(height - 1, y / viewHeight * (height - 1)));
+    const col = Math.min(width - 2, Math.floor(gx));
+    const row = Math.min(height - 2, Math.floor(gy));
+    const tx = gx - col, ty = gy - row, i = row * width + col;
+    const a = (1 - tx) * (1 - ty), b = tx * (1 - ty), c = (1 - tx) * ty, d = tx * ty;
+    out[0] = displacementX[i] * a + displacementX[i + 1] * b +
+      displacementX[i + width] * c + displacementX[i + width + 1] * d;
+    out[1] = displacementY[i] * a + displacementY[i + 1] * b +
+      displacementY[i + width] * c + displacementY[i + width + 1] * d;
+    return out;
   }
-  return { move, release, reset, step, samples };
+
+  const rect = canvas.getBoundingClientRect();
+  resize(rect.width || 1, rect.height || 1);
+  return { move, release() { previous = null; }, reset, step, resize, sample, range,
+    get pixels() { return pixels; }, get width() { return width; }, get height() { return height; } };
 };
 
 // Embedded browsers sometimes forward mouse events without their matching
