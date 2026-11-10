@@ -98,7 +98,7 @@
       tint = mix(tint, amber, smoothstep(0.70, 0.97, light.z));
       float shimmer = 0.93 + 0.07 * sin(seed * 2.0 + time * (0.7 + light.z));
       brightness = light.y * shimmer;
-      if (kind != 1.0) brightness *= mix(1.0, kind == 2.0 ? 0.42 : 0.82, sideView);
+      if (kind != 1.0) brightness *= mix(1.0, 0.82, sideView);
     }`;
 
   const fragmentSource = `
@@ -110,19 +110,14 @@
       vec2 p = 2.0 * gl_PointCoord - 1.0;
       float r2 = dot(p, p);
       float fade = 1.0 - smoothstep(0.60, 1.0, r2);
-      vec3 emission;
-      if (kind == 2.0) {
-        // Unresolved clusters contribute a little light behind the individual stars.
-        emission = tint * exp(-3.8 * r2);
-      } else if (kind == 3.0) {
+      float radius = sqrt(r2);
+      float core = pow(1.0 - smoothstep(0.0, 1.0, radius), 2.2);
+      vec3 emission = mix(tint, vec3(1.0, 0.98, 0.94), 0.78) * core;
+      emission += tint * 0.07 * exp(-3.5 * r2);
+      if (kind == 3.0) {
         vec2 axis = abs(p);
-        float rays = exp(-36.0 * min(axis.x, axis.y) - 4.5 * max(axis.x, axis.y));
-        float core = exp(-85.0 * r2);
-        emission = tint * (0.23 * exp(-4.7 * r2) + 0.65 * rays);
-        emission += mix(tint, vec3(1.0), 0.85) * core;
-      } else {
-        emission = mix(tint, vec3(1.0, 0.98, 0.94), 0.46) * exp(-12.0 * r2);
-        emission += 0.17 * tint * exp(-3.4 * r2);
+        float rays = exp(-40.0 * min(axis.x, axis.y) - 5.0 * max(axis.x, axis.y));
+        emission += tint * rays * 0.20;
       }
       gl_FragColor = vec4(emission * fade * brightness, 1.0);
     }`;
@@ -186,7 +181,7 @@
   }
   function scatter() { return random() + random() + random() - 1.5; }
 
-  const maxStars = 104000;
+  const maxStars = window.StarField.maxStars;
   const stars = new Float32Array(maxStars * 8);
   const fullCircle = Math.PI * 2;
   const clamp = value => Math.max(0, Math.min(1, value));
@@ -220,22 +215,27 @@
     const height = scatter() * spread + 0.021 * Math.sin(r * 9.0 + phase + strand);
     let hue = (arm ? 0.78 : 0.18) + scatter() * 0.31 + (0.82 - r) * 0.24 + 0.10 * Math.sin(r * 6.0 + phase);
     let kind = filament ? 4 : 0;
-    let diameter = 1.55 + Math.pow(random(), 3.4) * 4.1;
+    const sizeRoll = random();
+    const bright = sizeRoll > 0.94;
+    let diameter = bright ? 7 + (sizeRoll - 0.94) / 0.06 * 8
+      : 1.5 + Math.pow(sizeRoll / 0.94, 2.4) * 5.1;
     let flux = 0.20 + Math.pow(random(), 1.4) * 0.85;
     if (filament) flux *= 0.55 + 0.96 * Math.sin(r * 8.0 + phase + strand) ** 2;
+    if (bright) flux = Math.max(flux, 0.88);
     if (field) {
       kind = 1;
       hue = random();
-      diameter = 1.9 + Math.pow(random(), 4.0) * 7.6;
+      diameter = 1.6 + Math.pow(random(), 2.8) * 5.4;
       flux = 0.24 + random() * 0.72;
       if (population > 0.012) flux *= 0.55;
     } else if (population > 0.986) {
-      kind = 2;
-      diameter = 19 + random() * 44;
-      flux = knot || filament ? 0.05 + random() * 0.055 : 0.021;
+      // Resolve these former diffuse clusters as a few individual bright stars.
+      kind = 0;
+      diameter = 7 + random() * 7;
+      flux = knot || filament ? 0.75 + random() * 0.25 : 0.70;
     } else if (population > 0.9838) {
       kind = 3;
-      diameter = 10 + Math.pow(random(), 1.65) * 19;
+      diameter = 10 + Math.pow(random(), 1.65) * 7;
       flux = 0.68 + random() * 0.43;
     }
     stars.set([
@@ -289,7 +289,7 @@
     wake.resize(width, height);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, wake.width, wake.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, wake.pixels);
     gl.uniform2f(locations.fieldSize, wake.width, wake.height);
-    count = Math.min(maxStars, Math.round(25500 + width * height / 19));
+    count = window.StarField.count(width, height);
     draw();
   }
 

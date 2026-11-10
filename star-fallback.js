@@ -21,44 +21,28 @@ window.drawStarFallback = function drawStarFallback(canvas) {
     return u * u * (3 - 2 * u);
   }
 
-  // Each cluster sprite contains a different scattering of unresolved points.
-  // Grouping these very faint stars keeps the disk affordable on CPU renderers.
+  // Individual stars use a compact round core; only a few have narrow rays.
   const tile = 72;
   const clusterVariants = 6;
   const atlas = document.createElement('canvas');
   atlas.width = tile * palette.length;
-  atlas.height = tile * (2 + clusterVariants);
+  atlas.height = tile * 2;
   const ink = atlas.getContext('2d');
   seed = 9206;
   palette.forEach((color, index) => {
     const left = index * tile;
     const x = left + tile / 2;
-    for (let row = 0; row < 2 + clusterVariants; row++) {
+    for (let row = 0; row < 2; row++) {
       const y = (row + 0.5) * tile;
-      const cluster = row >= 2;
       const glow = ink.createRadialGradient(x, y, 0, x, y, tile / 2);
-      if (cluster) {
-        glow.addColorStop(0, `rgba(${color},.15)`);
-        glow.addColorStop(0.46, `rgba(${color},.067)`);
-        glow.addColorStop(1, `rgba(${color},0)`);
-      } else {
-        glow.addColorStop(0, '#fffaf4');
-        glow.addColorStop(0.12, `rgba(${color},.97)`);
-        glow.addColorStop(0.25, `rgba(${color},.56)`);
-        glow.addColorStop(0.51, `rgba(${color},.13)`);
-        glow.addColorStop(1, `rgba(${color},0)`);
-      }
+      glow.addColorStop(0, '#fffaf4');
+      glow.addColorStop(0.25, 'rgba(255,250,241,.69)');
+      glow.addColorStop(0.5, `rgba(${color},.25)`);
+      glow.addColorStop(0.75, `rgba(${color},.04)`);
+      glow.addColorStop(1, `rgba(${color},0)`);
       ink.fillStyle = glow;
       ink.fillRect(left, row * tile, tile, tile);
-      if (cluster) {
-        for (let j = 0; j < 37; j++) {
-          const dx = normal() * 19, dy = normal() * 19;
-          if (dx * dx + dy * dy > 32 * 32) continue;
-          const size = 0.7 + random() ** 2 * 2;
-          ink.fillStyle = `rgba(${color},${0.28 + random() * 0.61})`;
-          ink.fillRect(x + dx, y + dy, size, size);
-        }
-      } else if (row === 1) {
+      if (row === 1) {
         ink.fillStyle = `rgba(${color},.42)`;
         ink.beginPath();
         ink.moveTo(x, y - 32); ink.lineTo(x + 1.2, y - 1.2);
@@ -116,8 +100,17 @@ window.drawStarFallback = function drawStarFallback(canvas) {
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
       context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-      stars = makeStars(Math.min(8700, Math.round(2850 + width * height / 235)));
+      stars = makeStars(window.StarField.count(width, height));
       for (const star of stars) {
+        // Resolve the old multi-star sprites into single points. Keep generation
+        // above unchanged so reducing density retains the approved spiral paths.
+        const sizeRoll = star.phase / tau;
+        const bright = sizeRoll > 0.94;
+        star.sprite = star.sprite === 1 ? 1 : 0;
+        star.size = star.sprite === 1 ? 10 + sizeRoll * 7 : bright
+          ? 7 + (sizeRoll - 0.94) / 0.06 * 8
+          : 1.5 + Math.pow(sizeRoll / 0.94, 2.4) * 5.1;
+        if (bright) star.brightness = Math.max(star.brightness, 0.88);
         star.volumeDepth = window.StarField.depth(star.radius, star.angle, star.phase, star.field ? 1 : 0);
       }
       wake.resize(width, height);
@@ -144,7 +137,6 @@ window.drawStarFallback = function drawStarFallback(canvas) {
     const pitchC = Math.cos(rotation.angles[0]), pitchS = Math.sin(rotation.angles[0]);
     const rotated = Math.hypot(...rotation.angles) > 0.00001;
     const sideView = window.StarField.sideAmount(rotation.angles[0], rotation.angles[1], tilt, inclination);
-    const clusterScale = Math.max(0.55, Math.min(1.16, Math.sqrt(width * height) / 940));
     for (const star of stars) {
       let x, y, sizeScale = 1;
       if (star.field) {
@@ -177,8 +169,8 @@ window.drawStarFallback = function drawStarFallback(canvas) {
       if (x < -margin || x > width + margin || y < -margin || y > height + margin) continue;
 
       const flicker = 0.92 + 0.08 * Math.sin(star.phase + elapsed * (0.43 + star.depth));
-      context.globalAlpha = star.brightness * flicker * (star.field ? 1 : 1 - sideView * (star.sprite > 1 ? 0.58 : 0.18));
-      const size = star.size * (star.sprite > 1 ? clusterScale : 1) * sizeScale;
+      context.globalAlpha = star.brightness * flicker * (star.field ? 1 : 1 - sideView * 0.18);
+      const size = star.size * sizeScale;
 
       const drift = wake.sample(x, y);
       const response = 1 / (0.65 + 1.75 * smooth((star.size - 1) / 13));

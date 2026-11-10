@@ -36,5 +36,10 @@ window.StarField = (() => {
     return amount * amount * (3 - 2 * amount);
   }
 
-  return { depth, lift, sideAmount };
+  const maxStars = 6500;
+  function count(width, height) {
+    return Math.min(maxStars, Math.round(1800 + width * height / 360));
+  }
+
+  return { depth, lift, sideAmount, maxStars, count };
 })();
