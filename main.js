@@ -36,6 +36,8 @@
     varying vec3 tint;
     varying float brightness;
     varying float kind;
+    varying float haloStrength;
+    varying float spriteExpansion;
 
     void main() {
       kind = orbit.w;
@@ -43,6 +45,7 @@
       vec2 position;
       float perspective = 1.0;
       float sizeScale = 1.0;
+      float depthDelta = 0.0;
       if (kind == 1.0) {
         vec2 drift = vec2(cos(time * 0.045 + seed), sin(time * 0.037 + seed));
         position = orbit.xy * viewport * 0.6 + drift * (4.0 + 8.0 * orbit.z);
@@ -69,10 +72,12 @@
           rotated.xy *= sizeScale;
           rotated.z += depthOffset;
         }
+        float restDepth = rotated.z;
         float yawC = cos(rotation.y), yawS = sin(rotation.y);
         rotated.xz = mat2(yawC, -yawS, yawS, yawC) * rotated.xz;
         float pitchC = cos(rotation.x), pitchS = sin(rotation.x);
         rotated.yz = mat2(pitchC, pitchS, -pitchS, pitchC) * rotated.yz;
+        depthDelta = rotated.z - restDepth;
         perspective = 3.6 / max(1.0, 3.6 - rotated.z);
         position = rotated.xy * scale * perspective;
       }
@@ -87,7 +92,10 @@
       float response = 1.0 / mass;
       position += drift * fieldRange * response;
       gl_Position = vec4(position / viewport * vec2(2.0, -2.0), 0.0, 1.0);
-      gl_PointSize = light.x * pixelRatio * perspective * sizeScale;
+      haloStrength = smoothstep(11.0, 15.0, light.x) * smoothstep(0.8, 1.0, light.y);
+      spriteExpansion = 1.0 + 1.5 * haloStrength;
+      float depthSize = clamp(1.0 + 0.07 * depthDelta, 0.90, 1.10);
+      gl_PointSize = light.x * pixelRatio * perspective * sizeScale * depthSize * spriteExpansion;
 
       vec3 sapphire = vec3(0.30, 0.47, 1.00);
       vec3 lilac = vec3(0.68, 0.62, 1.00);
@@ -97,7 +105,7 @@
       tint = mix(tint, rose, smoothstep(0.43, 0.72, light.z));
       tint = mix(tint, amber, smoothstep(0.70, 0.97, light.z));
       float shimmer = 0.93 + 0.07 * sin(seed * 2.0 + time * (0.7 + light.z));
-      brightness = light.y * shimmer;
+      brightness = light.y * shimmer * clamp(1.0 + 0.22 * depthDelta, 0.72, 1.24);
       if (kind != 1.0) brightness *= mix(1.0, 0.82, sideView);
     }`;
 
@@ -106,8 +114,11 @@
     varying vec3 tint;
     varying float brightness;
     varying float kind;
+    varying float haloStrength;
+    varying float spriteExpansion;
     void main() {
-      vec2 p = 2.0 * gl_PointCoord - 1.0;
+      vec2 sprite = 2.0 * gl_PointCoord - 1.0;
+      vec2 p = sprite * spriteExpansion;
       float r2 = dot(p, p);
       float fade = 1.0 - smoothstep(0.60, 1.0, r2);
       float radius = sqrt(r2);
@@ -119,7 +130,11 @@
         float rays = exp(-40.0 * min(axis.x, axis.y) - 5.0 * max(axis.x, axis.y));
         emission += tint * rays * 0.20;
       }
-      gl_FragColor = vec4(emission * fade * brightness, 1.0);
+      float haloRadiusSquared = dot(sprite, sprite);
+      float haloFade = 1.0 - smoothstep(0.5, 1.0, haloRadiusSquared);
+      float halo = haloStrength * 0.045 * exp(-4.0 * haloRadiusSquared) * haloFade;
+      // Keep the core's original profile and add only a faint surrounding halo.
+      gl_FragColor = vec4((emission * fade + tint * halo) * brightness, 1.0);
     }`;
 
   function compile(type, source) {

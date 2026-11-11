@@ -36,10 +36,25 @@ window.StarField = (() => {
     return amount * amount * (3 - 2 * amount);
   }
 
+  function smooth(low, high, value) {
+    const t = Math.max(0, Math.min(1, (value - low) / (high - low)));
+    return t * t * (3 - 2 * t);
+  }
+
+  function halo(size, flux) {
+    return smooth(11, 15, size) * smooth(0.8, 1, flux);
+  }
+
+  function depthLight(delta, out = [1, 1]) {
+    out[0] = Math.max(0.72, Math.min(1.24, 1 + 0.22 * delta));
+    out[1] = Math.max(0.90, Math.min(1.10, 1 + 0.07 * delta));
+    return out;
+  }
+
   const maxStars = 6500;
   function count(width, height) {
     return Math.min(maxStars, Math.round(1800 + width * height / 360));
   }
 
-  return { depth, lift, sideAmount, maxStars, count };
+  return { depth, lift, sideAmount, halo, depthLight, maxStars, count };
 })();

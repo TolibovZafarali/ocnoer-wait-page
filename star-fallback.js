@@ -26,20 +26,27 @@ window.drawStarFallback = function drawStarFallback(canvas) {
   const clusterVariants = 6;
   const atlas = document.createElement('canvas');
   atlas.width = tile * palette.length;
-  atlas.height = tile * 2;
+  atlas.height = tile * 3;
   const ink = atlas.getContext('2d');
   seed = 9206;
   palette.forEach((color, index) => {
     const left = index * tile;
     const x = left + tile / 2;
-    for (let row = 0; row < 2; row++) {
+    for (let row = 0; row < 3; row++) {
       const y = (row + 0.5) * tile;
       const glow = ink.createRadialGradient(x, y, 0, x, y, tile / 2);
-      glow.addColorStop(0, '#fffaf4');
-      glow.addColorStop(0.25, 'rgba(255,250,241,.69)');
-      glow.addColorStop(0.5, `rgba(${color},.25)`);
-      glow.addColorStop(0.75, `rgba(${color},.04)`);
-      glow.addColorStop(1, `rgba(${color},0)`);
+      if (row === 2) {
+        glow.addColorStop(0, `rgba(${color},.045)`);
+        glow.addColorStop(0.35, `rgba(${color},.028)`);
+        glow.addColorStop(0.7, `rgba(${color},.006)`);
+        glow.addColorStop(1, `rgba(${color},0)`);
+      } else {
+        glow.addColorStop(0, '#fffaf4');
+        glow.addColorStop(0.25, 'rgba(255,250,241,.69)');
+        glow.addColorStop(0.5, `rgba(${color},.25)`);
+        glow.addColorStop(0.75, `rgba(${color},.04)`);
+        glow.addColorStop(1, `rgba(${color},0)`);
+      }
       ink.fillStyle = glow;
       ink.fillRect(left, row * tile, tile, tile);
       if (row === 1) {
@@ -111,6 +118,7 @@ window.drawStarFallback = function drawStarFallback(canvas) {
           ? 7 + (sizeRoll - 0.94) / 0.06 * 8
           : 1.5 + Math.pow(sizeRoll / 0.94, 2.4) * 5.1;
         if (bright) star.brightness = Math.max(star.brightness, 0.88);
+        star.halo = window.StarField.halo(star.size, star.brightness);
         star.volumeDepth = window.StarField.depth(star.radius, star.angle, star.phase, star.field ? 1 : 0);
       }
       wake.resize(width, height);
@@ -119,6 +127,7 @@ window.drawStarFallback = function drawStarFallback(canvas) {
   }
 
   const lifted = [0, 0, 0, 1];
+  const lighting = [1, 1];
   function render() {
     if (!stars) return;
     context.globalAlpha = 1;
@@ -138,7 +147,7 @@ window.drawStarFallback = function drawStarFallback(canvas) {
     const rotated = Math.hypot(...rotation.angles) > 0.00001;
     const sideView = window.StarField.sideAmount(rotation.angles[0], rotation.angles[1], tilt, inclination);
     for (const star of stars) {
-      let x, y, sizeScale = 1;
+      let x, y, sizeScale = 1, depthDelta = 0;
       if (star.field) {
         x = star.x * width + Math.sin(elapsed * 0.03 + star.phase) * 5;
         y = star.y * height + Math.cos(elapsed * 0.04 + star.phase) * 5;
@@ -156,6 +165,7 @@ window.drawStarFallback = function drawStarFallback(canvas) {
           window.StarField.lift(localX / span, localY / span, 0, z, 3.6, lifted);
           const rotatedZ = -lifted[0] * yawS + lifted[2] * yawC;
           const viewZ = lifted[1] * pitchS + rotatedZ * pitchC;
+          depthDelta = viewZ - lifted[2];
           const perspective = 3.6 / Math.max(1, 3.6 - viewZ);
           x = cx + (lifted[0] * yawC + lifted[2] * yawS) * span * perspective;
           y = cy + (lifted[1] * pitchC - rotatedZ * pitchS) * span * perspective;
@@ -165,17 +175,26 @@ window.drawStarFallback = function drawStarFallback(canvas) {
           y = cy + localY;
         }
       }
-      const margin = 32 * Math.max(1, sizeScale) + wake.range / 0.65;
+      window.StarField.depthLight(depthDelta, lighting);
+      const expansion = 1 + 1.5 * star.halo;
+      const margin = 32 * Math.max(1, sizeScale * lighting[1] * expansion) + wake.range / 0.65;
       if (x < -margin || x > width + margin || y < -margin || y > height + margin) continue;
 
       const flicker = 0.92 + 0.08 * Math.sin(star.phase + elapsed * (0.43 + star.depth));
-      context.globalAlpha = star.brightness * flicker * (star.field ? 1 : 1 - sideView * 0.18);
-      const size = star.size * sizeScale;
+      const alpha = Math.min(1, star.brightness * flicker * lighting[0] * (star.field ? 1 : 1 - sideView * 0.18));
+      const size = star.size * sizeScale * lighting[1];
 
       const drift = wake.sample(x, y);
       const response = 1 / (0.65 + 1.75 * smooth((star.size - 1) / 13));
       x += drift[0] * response;
       y += drift[1] * response;
+      if (star.halo > 0) {
+        const glowSize = size * expansion;
+        context.globalAlpha = alpha * star.halo;
+        context.drawImage(atlas, star.tint * tile, 2 * tile, tile, tile,
+          x - glowSize / 2, y - glowSize / 2, glowSize, glowSize);
+      }
+      context.globalAlpha = alpha;
       context.drawImage(atlas, star.tint * tile, star.sprite * tile, tile, tile,
         x - size / 2, y - size / 2, size, size);
     }
